@@ -3,6 +3,8 @@ Telegram Study Bot - Helps students study with AI-powered summaries and challeng
 
 Admin uploads PDF lectures or code files → Bot processes with Groq AI → 
 Sends summaries/challenges to Student along with original files.
+
+Now with RAG: Uploaded content is indexed for semantic search!
 """
 
 import os
@@ -25,6 +27,7 @@ load_dotenv()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 FRIEND_ID = int(os.getenv("FRIEND_ID", "0"))
 
@@ -38,6 +41,9 @@ logger = logging.getLogger(__name__)
 # Configure Groq client
 client = Groq(api_key=GROQ_API_KEY)
 MODEL = "llama-3.3-70b-versatile"  # Current free model
+
+# RAG availability flag
+RAG_ENABLED = False
 
 # Supported code file extensions
 CODE_EXTENSIONS = {".py", ".java", ".c", ".cpp", ".js", ".ts", ".cs", ".go", ".rb", ".php"}
@@ -71,6 +77,17 @@ CODE:
 ```
 {content}
 ```
+"""
+
+RAG_QUESTION_PROMPT = """You are a helpful study assistant. Answer the student's question using the provided context from their lecture materials.
+
+CONTEXT FROM LECTURES:
+{context}
+
+STUDENT'S QUESTION:
+{question}
+
+Provide a clear, helpful answer based on the lecture material. If the context doesn't contain enough information to answer, say so and provide what general knowledge you can.
 """
 
 # ============================================================================
@@ -159,6 +176,8 @@ async def process_pdf(
     file_name: str
 ) -> None:
     """Process PDF lecture files."""
+    global RAG_ENABLED
+    
     # Download PDF
     file = await context.bot.get_file(document.file_id)
     file_bytes = await file.download_as_bytearray()
@@ -173,13 +192,26 @@ async def process_pdf(
     if not pdf_text.strip():
         raise ValueError("Could not extract any text from PDF. It may be scanned/image-based.")
     
+    # Index in RAG knowledge base if available
+    rag_status = ""
+    if RAG_ENABLED:
+        try:
+            import rag_engine
+            chunks_added = rag_engine.add_document(pdf_text, file_name)
+            rag_status = f"\n📚 Indexed {chunks_added} chunks in knowledge base"
+            logger.info(f"Added {chunks_added} chunks to RAG from {file_name}")
+        except Exception as e:
+            logger.error(f"RAG indexing failed: {e}")
+            rag_status = "\n⚠️ Knowledge base indexing failed"
+    
     # Truncate if too long (Groq has token limits)
     max_chars = 25000
+    summary_text = pdf_text
     if len(pdf_text) > max_chars:
-        pdf_text = pdf_text[:max_chars] + "\n\n[... content truncated for processing ...]"
+        summary_text = pdf_text[:max_chars] + "\n\n[... content truncated for processing ...]"
     
     # Generate AI summary
-    prompt = LECTURE_PROMPT.format(content=pdf_text)
+    prompt = LECTURE_PROMPT.format(content=summary_text)
     summary = await generate_ai_response(prompt)
     
     # Send summary to Student
@@ -197,7 +229,7 @@ async def process_pdf(
     )
     
     # Confirm to Admin
-    await update.message.reply_text(f"✅ Sent summary + PDF to your friend!")
+    await update.message.reply_text(f"✅ Sent summary + PDF to your friend!{rag_status}")
 
 
 async def process_code(
@@ -207,6 +239,8 @@ async def process_code(
     file_name: str
 ) -> None:
     """Process code files to create challenges."""
+    global RAG_ENABLED
+    
     # Download code file
     file = await context.bot.get_file(document.file_id)
     file_bytes = await file.download_as_bytearray()
@@ -219,6 +253,18 @@ async def process_code(
     
     if not code_content.strip():
         raise ValueError("Code file is empty.")
+    
+    # Index in RAG knowledge base if available
+    rag_status = ""
+    if RAG_ENABLED:
+        try:
+            import rag_engine
+            chunks_added = rag_engine.add_document(code_content, file_name)
+            rag_status = f"\n📚 Indexed {chunks_added} chunks in knowledge base"
+            logger.info(f"Added {chunks_added} chunks to RAG from {file_name}")
+        except Exception as e:
+            logger.error(f"RAG indexing failed: {e}")
+            rag_status = "\n⚠️ Knowledge base indexing failed"
     
     # Truncate if too long
     max_chars = 15000
@@ -244,12 +290,71 @@ async def process_code(
     )
     
     # Confirm to Admin
-    await update.message.reply_text(f"✅ Sent challenge + solution file to your friend!")
+    await update.message.reply_text(f"✅ Sent challenge + solution file to your friend!{rag_status}")
+
+
+async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle text questions from the student using RAG."""
+    global RAG_ENABLED
+    
+    user_id = update.effective_user.id
+    
+    # Only respond to the student
+    if user_id != FRIEND_ID:
+        # If it's the admin, just ignore text messages
+        if user_id == ADMIN_ID:
+            return
+        await update.message.reply_text("Sorry, this bot is private.")
+        return
+    
+    question = update.message.text
+    
+    if not question or len(question) < 3:
+        return
+    
+    # Check if RAG is available
+    if not RAG_ENABLED:
+        await update.message.reply_text(
+            "🤖 Knowledge base is not available yet.\n"
+            "Ask your friend to upload some lecture PDFs first!"
+        )
+        return
+    
+    await update.message.reply_text("🔍 Searching lecture materials...")
+    
+    try:
+        import rag_engine
+        
+        # Get relevant context
+        context_str = rag_engine.get_context_string(question)
+        
+        if not context_str:
+            await update.message.reply_text(
+                "📭 No relevant content found in the knowledge base.\n"
+                "Try rephrasing your question or ask your friend to upload more materials."
+            )
+            return
+        
+        # Generate answer with context
+        prompt = RAG_QUESTION_PROMPT.format(context=context_str, question=question)
+        answer = await generate_ai_response(prompt)
+        
+        await update.message.reply_text(
+            f"📖 <b>Answer based on your lectures:</b>\n\n{answer}",
+            parse_mode="HTML"
+        )
+        
+    except Exception as e:
+        logger.error(f"RAG question error: {e}")
+        await update.message.reply_text(f"❌ Error searching knowledge base: {str(e)}")
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command."""
+    global RAG_ENABLED
     user_id = update.effective_user.id
+    
+    rag_info = "\n\n🧠 <b>Knowledge Base:</b> " + ("Active ✅" if RAG_ENABLED else "Not configured")
     
     if user_id == ADMIN_ID:
         await update.message.reply_text(
@@ -257,7 +362,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "Upload files and I'll process them for your friend:\n"
             "• 📄 <b>PDF</b> → AI Summary + Original file\n"
             "• 💻 <b>Code</b> → Coding Challenge + Solution file\n\n"
-            f"Friend ID configured: <code>{FRIEND_ID}</code>",
+            f"Friend ID configured: <code>{FRIEND_ID}</code>"
+            f"{rag_info}",
             parse_mode="HTML"
         )
     elif user_id == FRIEND_ID:
@@ -266,7 +372,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "You'll receive study materials here automatically:\n"
             "• 📚 Lecture summaries with key concepts\n"
             "• 💻 Coding challenges to practice\n\n"
-            "Good luck with your studies! 📖",
+            "💡 <b>Ask me questions!</b> I can search through uploaded lectures."
+            f"{rag_info}",
             parse_mode="HTML"
         )
     else:
@@ -279,6 +386,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 def main() -> None:
     """Start the bot."""
+    global RAG_ENABLED
+    
     # Validate configuration
     if not TELEGRAM_TOKEN:
         raise ValueError("TELEGRAM_TOKEN not set in .env")
@@ -289,7 +398,20 @@ def main() -> None:
     if FRIEND_ID == 0:
         raise ValueError("FRIEND_ID not set in .env")
     
-    logger.info(f"Starting bot... Admin ID: {ADMIN_ID}, Friend ID: {FRIEND_ID}")
+    # Initialize RAG if DATABASE_URL is available
+    if DATABASE_URL:
+        try:
+            import rag_engine
+            rag_engine.init_db()
+            RAG_ENABLED = True
+            logger.info("RAG knowledge base initialized successfully!")
+        except Exception as e:
+            logger.warning(f"RAG initialization failed: {e}. Running without knowledge base.")
+            RAG_ENABLED = False
+    else:
+        logger.info("DATABASE_URL not set. Running without RAG knowledge base.")
+    
+    logger.info(f"Starting bot... Admin ID: {ADMIN_ID}, Friend ID: {FRIEND_ID}, RAG: {RAG_ENABLED}")
     
     # Build application
     app = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -297,6 +419,7 @@ def main() -> None:
     # Add handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question))
     
     # Start polling
     logger.info("Bot is running with Groq AI! Press Ctrl+C to stop.")

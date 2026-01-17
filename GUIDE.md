@@ -1,15 +1,31 @@
 # 📚 Study Bot - Complete Setup Guide
 
-A Telegram bot that helps students study by generating AI summaries of lectures and coding challenges.
+A Telegram bot that helps students study by generating AI summaries of lectures and coding challenges, with a **RAG-powered knowledge base** for answering questions.
 
 ---
 
 ## 🎯 What Does This Bot Do?
 
-| You Upload | Your Friend Gets |
-|------------|------------------|
-| 📄 **PDF Lecture** | AI Summary + Original PDF |
-| 💻 **Code File** | Coding Challenge + Solution File |
+| Feature | Description |
+|---------|-------------|
+| 📄 **PDF Summaries** | Upload a lecture PDF → Get AI-generated summary with key concepts |
+| 💻 **Code Challenges** | Upload code file → Get a coding challenge + solution |
+| 🧠 **RAG Knowledge Base** | All uploads are indexed → Student can ask questions about any lecture |
+
+---
+
+## 🧠 What is RAG?
+
+**RAG (Retrieval Augmented Generation)** makes the bot smarter by remembering all uploaded content:
+
+1. **Indexing**: When you upload a PDF, it's split into chunks and stored as vectors
+2. **Semantic Search**: When the student asks a question, the bot finds relevant chunks
+3. **Context-Aware Answers**: The AI answers using the actual lecture content
+
+**Example:**
+- Admin uploads 5 lecture PDFs about Data Structures
+- Student asks: "How does a binary search tree work?"
+- Bot searches all lectures → Finds relevant sections → Gives answer based on the lectures
 
 ---
 
@@ -17,72 +33,70 @@ A Telegram bot that helps students study by generating AI summaries of lectures 
 
 ### Step 1: Get Your API Keys
 
-1. **Telegram Bot Token**
-   - Open Telegram and message [@BotFather](https://t.me/BotFather)
-   - Send `/newbot` and follow the prompts
-   - Copy the token (looks like `123456789:ABCdef...`)
+| Service | Where to Get | Purpose |
+|---------|--------------|---------|
+| **Telegram Bot** | [@BotFather](https://t.me/BotFather) | Bot token |
+| **Groq API** | [console.groq.com](https://console.groq.com) | AI (free!) |
+| **User IDs** | [@userinfobot](https://t.me/userinfobot) | Admin & Student IDs |
 
-2. **Groq API Key** (FREE)
-   - Go to [console.groq.com](https://console.groq.com)
-   - Sign up and create an API key
-
-3. **Telegram User IDs**
-   - Message [@userinfobot](https://t.me/userinfobot) on Telegram
-   - It will reply with your ID (a number like `409070322`)
-   - Get your friend's ID the same way
-
----
-
-### Step 2: Configure the Bot
-
-1. Copy `.env.example` to `.env`:
-   ```bash
-   cp .env.example .env
-   ```
-
-2. Edit `.env` with your values:
-   ```
-   TELEGRAM_TOKEN=your_bot_token_here
-   GROQ_API_KEY=your_groq_key_here
-   ADMIN_ID=your_telegram_id
-   FRIEND_ID=friends_telegram_id
-   ```
-
----
-
-### Step 3: Install & Run
+### Step 2: Configure
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+cp .env.example .env
+# Edit .env with your values
+```
 
-# Run the bot
+### Step 3: Run Locally
+
+```bash
+pip install -r requirements.txt
 python study_bot.py
 ```
 
----
+### Step 4: Friend Must Start Bot
 
-### Step 4: Your Friend Must Start the Bot
-
-⚠️ **Important:** Before you can send materials to your friend, they MUST:
-1. Open the bot in Telegram (search for your bot's name)
-2. Press **Start** or send `/start`
+Your friend needs to message the bot and press **Start** before receiving materials.
 
 ---
 
-## ☁️ Deploy to Cloud (Run 24/7)
+## ☁️ Deploy to Railway (Run 24/7)
 
-### Using Railway (Recommended)
+### Basic Deployment
 
-1. Push code to GitHub
-2. Sign up at [railway.app](https://railway.app) with GitHub
-3. Create new project → Deploy from GitHub
-4. Add environment variables in Railway's **Variables** tab:
-   - `TELEGRAM_TOKEN`
-   - `GROQ_API_KEY`
-   - `ADMIN_ID`
-   - `FRIEND_ID`
-5. Deploy!
+1. Push to GitHub
+2. Go to [railway.app](https://railway.app) → Sign in with GitHub
+3. **New Project** → **Deploy from GitHub**
+4. Add environment variables in **Variables** tab
+
+### Enable RAG Knowledge Base
+
+1. In Railway, click **"+ New"** → **"Database"** → **"PostgreSQL"**
+2. Railway automatically adds `DATABASE_URL`
+3. Redeploy - the bot will create tables automatically!
+
+---
+
+## 💬 How to Use RAG (For Students)
+
+Once RAG is enabled, the student can **ask questions directly** to the bot:
+
+```
+Student: "What is the time complexity of quicksort?"
+Bot: 📖 Based on your lectures: "Quicksort has an average time complexity of O(n log n)..."
+```
+
+The bot searches through all uploaded lecture materials and provides answers with context!
+
+---
+
+## 🔧 RAG Optimization Tips
+
+| Optimization | Description |
+|--------------|-------------|
+| **Chunk Size** | Default 500 chars works well for lectures |
+| **Overlap** | 50 char overlap prevents cutting concepts in half |
+| **Top-K** | Returns 3 most relevant chunks (configurable) |
+| **Embedding Model** | Uses `bge-small-en-v1.5` (384 dims, fast on CPU) |
 
 ---
 
@@ -104,8 +118,9 @@ python study_bot.py
 | Error | Solution |
 |-------|----------|
 | "Chat not found" | Friend needs to `/start` the bot first |
-| "API key not set" | Check your `.env` file or Railway variables |
-| "Model decommissioned" | Update the `MODEL` variable in `study_bot.py` |
+| "Conflict: terminated by other getUpdates" | Stop local bot - Railway is running it |
+| "Knowledge base not available" | Add PostgreSQL database in Railway |
+| "API key not set" | Check Railway environment variables |
 
 ---
 
